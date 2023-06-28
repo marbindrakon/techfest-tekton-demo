@@ -1,0 +1,71 @@
+{{- if .Values.webhook.enabled -}}
+---
+apiVersion: triggers.tekton.dev/v1alpha1
+kind: TriggerTemplate
+metadata:
+  name: fw-template
+spec:
+  params:
+    - description: The git repository url
+      name: git-repo-url
+    - default: master
+      description: The git revision
+      name: git-revision
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        name: fw-build-$(uid)
+      spec:
+        pipelineRef:
+          name: esp-mqtt-sensor-firmware
+        serviceAccountName: pipeline
+        workspaces:
+          - name: fw-code
+            volumeClaimTemplate:
+              metadata:
+                creationTimestamp: null
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 1Gi
+                volumeMode: Filesystem
+              status: {}
+          - name: fw-files
+            persistentVolumeClaim:
+              claimName: firmware-storage
+          - name: signing
+            secret:
+              secretName: fw-signing-key
+---
+apiVersion: triggers.tekton.dev/v1alpha1
+kind: EventListener
+metadata:
+  name: fw
+spec:
+  serviceAccountName: pipeline
+  triggers:
+    - bindings:
+        - ref: github-push
+          kind: ClusterTriggerBinding
+      template:
+        ref: fw-template
+---
+kind: Route
+apiVersion: route.openshift.io/v1
+metadata:
+  name: esp-firmware-github
+spec:
+  to:
+    kind: Service
+    name: el-fw
+    weight: 100
+  port:
+    targetPort: http-listener
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+{{ end }}

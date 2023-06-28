@@ -1,0 +1,45 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: esp-mqtt-sensor-firmware
+spec:
+  params:
+    - default: {{ .Values.gitRepos.fw }}
+      name: code_repo
+      type: string
+    - default: master
+      name: git_rev
+      type: string
+  tasks:
+    - name: git-clone
+      params:
+        - name: url
+          value: '$(params.code_repo)'
+        - name: revision
+          value: '$(params.git_rev)'
+        - name: deleteExisting
+          value: 'true'
+        - name: verbose
+          value: 'true'
+      taskRef:
+        kind: ClusterTask
+        name: git-clone-1-11-0
+      workspaces:
+        - name: output
+          workspace: fw-code
+    - name: pio-build
+      runAfter:
+        - git-clone
+      taskRef:
+        name: platformio-build
+      workspaces:
+        - name: fw-code
+          workspace: fw-code
+        - name: fw-files
+          workspace: fw-files
+        - name: signing
+          workspace: signing
+  workspaces:
+    - name: fw-code
+    - name: fw-files
+    - name: signing

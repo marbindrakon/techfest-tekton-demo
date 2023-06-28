@@ -1,0 +1,154 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: esp-wrangler-git-commit
+spec:
+  params:
+    - default: {{ .Values.gitRepos.code }}
+      name: code_repo
+      type: string
+    - default: master
+      name: git_rev
+      type: string
+  tasks:
+    - name: git-clone
+      params:
+        - name: url
+          value: '$(params.code_repo)'
+        - name: revision
+          value: '$(params.git_rev)'
+        - name: deleteExisting
+          value: 'true'
+        - name: verbose
+          value: 'true'
+      taskRef:
+        kind: ClusterTask
+        name: git-clone-1-11-0
+      workspaces:
+        - name: output
+          workspace: code
+    - name: platformio-builder-build
+      params:
+        - name: IMAGE
+          value: >-
+            {{ .Values.imageRegistries.pioBuilder }}:$(tasks.git-clone.results.commit)
+        - name: DOCKERFILE
+          value: ./utility-images/platformio-build/Dockerfile
+        - name: CONTEXT
+          value: ./utility-images/platformio-build
+      runAfter:
+        - git-clone
+      taskRef:
+        kind: ClusterTask
+        name: buildah-1-11-0
+      workspaces:
+        - name: source
+          workspace: code
+        - name: dockerconfig
+          workspace: registry-secret
+    - name: fw-httpd-build
+      params:
+        - name: IMAGE
+          value: >-
+            {{ .Values.imageRegistries.firmwareServer }}:$(tasks.git-clone.results.commit)
+        - name: DOCKERFILE
+          value: ./utility-images/fw-web-server/Dockerfile
+        - name: CONTEXT
+          value: ./utility-images/fw-web-server
+      runAfter:
+        - git-clone
+      taskRef:
+        kind: ClusterTask
+        name: buildah-1-11-0
+      workspaces:
+        - name: source
+          workspace: code
+        - name: dockerconfig
+          workspace: registry-secret
+    - name: quarkus-maven-build
+      params:
+        - name: GOALS
+          value:
+            - package
+        - name: CONTEXT_DIR
+          value: .
+      runAfter:
+        - git-clone
+      taskRef:
+        kind: ClusterTask
+        name: maven-1-11-0
+      workspaces:
+        - name: maven-settings
+          workspace: maven-settings
+        - name: source
+          workspace: code
+    - name: quarkus-app-image
+      params:
+        - name: IMAGE
+          value: >-
+            {{ .Values.imageRegistries.espWrangler }}:$(tasks.git-clone.results.commit)
+        - name: DOCKERFILE
+          value: ./src/main/docker/Dockerfile.jvm
+        - name: CONTEXT
+          value: .
+      runAfter:
+        - quarkus-maven-build
+      taskRef:
+        kind: ClusterTask
+        name: buildah-1-11-0
+      workspaces:
+        - name: source
+          workspace: code
+        - name: dockerconfig
+          workspace: registry-secret
+  finally:
+    - name: tag-wrangler-latest
+      taskRef:
+        name: skopeo-copy-customized
+      params:
+        - name: srcImageURL
+          value: 'docker://{{ .Values.imageRegistries.espWrangler }}:$(tasks.git-clone.results.commit)'
+        - name: destImageURL
+          value: 'docker://{{ .Values.imageRegistries.espWrangler }}:latest'
+      workspaces:
+        - name: dockerconfig
+          workspace: registry-secret
+      when:
+        - input: $(tasks.status)
+          operator: in
+          values: ["Succeeded"]
+    - name: tag-pio-latest
+      taskRef:
+        name: skopeo-copy-customized
+      params:
+        - name: srcImageURL
+          value: 'docker://{{ .Values.imageRegistries.pioBuilder }}:$(tasks.git-clone.results.commit)'
+        - name: destImageURL
+          value: 'docker://{{ .Values.imageRegistries.pioBuilder }}:latest'
+      workspaces:
+        - name: dockerconfig
+          workspace: registry-secret
+      when:
+        - input: $(tasks.status)
+          operator: in
+          values: ["Succeeded"]
+    - name: tag-fw-httpd-latest
+      taskRef:
+        name: skopeo-copy-customized
+      params:
+        - name: srcImageURL
+          value: 'docker://{{ .Values.imageRegistries.firmwareServer }}:$(tasks.git-clone.results.commit)'
+        - name: destImageURL
+          value: 'docker://{{ .Values.imageRegistries.firmwareServer }}:latest'
+      workspaces:
+        - name: dockerconfig
+          workspace: registry-secret
+      when:
+        - input: $(tasks.status)
+          operator: in
+          values: ["Succeeded"]
+
+  workspaces:
+    - name: code
+    - name: registry-secret
+    - name: maven-settings
