@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ci-deployment
+  namespace: openshift-gitops
+spec:
+  destination:
+    namespace: techfest-tekton-06282023
+    server: "https://kubernetes.default.svc"
+  project: default
+  syncPolicy:
+    automated: {}
+    syncOptions:
+      - CreateNamespace=true
+  source:
+    repoURL: "https://github.com/marbindrakon/techfest-tekton-demo.git"
+    path: "charts/demo-ci-template"
+    targetRevision: HEAD
+    helm:
+      values: |
+        webhook:
+          enabled: true
+        gitRepos:
+          code: https://github.com/marbindrakon/quarkus-esp-wrangler
+          fw: https://github.com/marbindrakon/esp-mqtt-sensor
+        imageRegistries:
+          espWrangler: quay.signal9.gg/home-automation/quarkus-esp-wrangler
+          pioBuilder:  quay.signal9.gg/home-automation/platformio-builder
+          firmwareServer: quay.signal9.gg/home-automation/fw-download-httpd
+        vaultSecrets:
+          enabled: true
+          imageRegistry: tekton-demo-quay
+          firmwareSigning: tekton-test-key
